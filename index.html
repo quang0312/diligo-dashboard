@@ -949,6 +949,20 @@ function dateRangeList(a,b){let out=[],d=new Date(a+'T00:00:00'),e=new Date(b+'T
 function overlapPeriod(r){return (!r.start&&!r.period_start)||((r.end||r.period_end)>=state.from&&(r.start||r.period_start)<=state.to)}
 function fullyInside(r){let a=r.period_start||r.start,b=r.period_end||r.end;return a>=state.from&&b<=state.to}
 function sourcePeriodText(){return `${fmtDateVN(state.from)} – ${fmtDateVN(state.to)}`}
+function periodKeyOf(r){let a=r.period_start||r.start,b=r.period_end||r.end||a;return a&&b?`${a}|${b}`:null}
+function bestNonOverlappingPeriodKeys(keys){
+  const cand=[...new Set(keys||[])].map(k=>{let [a,b]=k.split('|'),ds=dateRangeList(a,b);return {k,a,b,ds,n:ds.length}})
+    .filter(x=>x.a>=state.from&&x.b<=state.to)
+    .sort((x,y)=>y.n-x.n||x.a.localeCompare(y.a)||x.b.localeCompare(y.b));
+  const used=new Set(),sel=[];
+  cand.forEach(x=>{if(x.ds.some(d=>used.has(d)))return;sel.push(x.k);x.ds.forEach(d=>used.add(d))});
+  return new Set(sel)
+}
+function bestPeriodRows(rows){
+  const groups={};(rows||[]).forEach(r=>{let g=r.source||'__ALL__';(groups[g]??=[]).push(r)});
+  let out=[];Object.values(groups).forEach(g=>{let keys=bestNonOverlappingPeriodKeys(g.map(periodKeyOf).filter(Boolean));out.push(...g.filter(r=>keys.has(periodKeyOf(r))))});
+  return out
+}
 function qualityInfo(){
   if(state.platform==='All')return {text:'Sàn: Tổng 2 sàn · Nguồn: Tổng nguồn',cls:'ok'};
   if(state.source==='Overall')return {text:`${state.platform}: Tổng nguồn doanh số`,cls:'ok'};
@@ -970,17 +984,29 @@ function shopeeCommonCoverage(){
     .map(r=>`${r.period_start}|${r.period_end}`)));
   if(!sets.length||sets.some(s=>s.size===0))return {periodKeys:new Set(),coverage:0,min:null,max:null};
   const common=[...sets[0]].filter(k=>sets.slice(1).every(s=>s.has(k)));
+  // Chỉ chọn một tập kỳ KHÔNG CHỒNG LẤN. Nếu HistoryStore có cả kỳ cộng dồn
+  // và các kỳ con, không được cộng cả hai lần.
+  const selected=bestNonOverlappingPeriodKeys(common);
   const covered=new Set();
-  common.forEach(k=>{const [a,b]=k.split('|');dateRangeList(a,b).forEach(d=>{if(d>=state.from&&d<=state.to)covered.add(d)})});
+  selected.forEach(k=>{const [a,b]=k.split('|');dateRangeList(a,b).forEach(d=>{if(d>=state.from&&d<=state.to)covered.add(d)})});
   const needed=dateRangeList(state.from,state.to);
   const coverage=needed.length?covered.size/needed.length:0;
   const ds=[...covered].sort();
-  return {periodKeys:new Set(common),coverage,min:ds[0]||null,max:ds[ds.length-1]||null};
+  return {periodKeys:selected,coverage,min:ds[0]||null,max:ds[ds.length-1]||null};
 }
 function shopeeSourceValue(key){
+  // Ưu tiên bảng nguồn lưu lượng THEO NGÀY vì đã dedupe theo ngày + nguồn,
+  // nên khớp trang "Nguồn & Lưu lượng" và không bị cộng trùng các kỳ chồng lấn trong HistoryStore.
+  if(state.brand==='All' && typeof trafficDailyRows==='function'){
+    const rr=trafficDailyRows(key);
+    if(rr.length){
+      const a=trafficAgg(key),span=a.covered.length?`${fmtDateVN(a.covered[0])}–${fmtDateVN(a.covered[a.covered.length-1])}`:'—';
+      return {value:Number(a.total.gmv||0),note:`Theo nguồn lưu lượng · ${a.covered.length}/${a.needed.length} ngày${a.coverage<.999?` · ${span}`:''}`,coverage:a.coverage};
+    }
+  }
   const rows=(DATA.source_periods||[]).filter(r=>r.platform==='Shopee'&&r.source===key);
   if(state.brand!=='All'){
-    let rr=DATA.categories.filter(r=>r.platform==='Shopee'&&r.source===key&&r.brand===state.brand&&overlapPeriod(r));
+    let rr=bestPeriodRows(DATA.categories.filter(r=>r.platform==='Shopee'&&r.source===key&&r.brand===state.brand));
     return {value:sum(rr,'gmv'),note:'Theo chi tiết nhãn khả dụng'};
   }
   const cov=shopeeCommonCoverage();
@@ -990,7 +1016,7 @@ function shopeeSourceValue(key){
   const value=sum(inside,'gmv');
   if(cov.coverage>=.999)return {value,note:`Đã phủ đủ ${fmtDateVN(state.from)}–${fmtDateVN(state.to)}`,coverage:cov.coverage};
   const span=(cov.min&&cov.max)?`${fmtDateVN(cov.min)}–${fmtDateVN(cov.max)}`:'kỳ khả dụng';
-  return {value,note:`Đang hiển thị phần có đủ 4 nguồn: ${span} · phủ ${pct(cov.coverage)} kỳ chọn`,coverage:cov.coverage};
+  return {value,note:`Đang hiển thị phần không chồng lấn: ${span} · phủ ${pct(cov.coverage)} kỳ chọn`,coverage:cov.coverage};
 }
 function aggregateCategories(rows,sourceLabel){
   const m={};
@@ -1001,13 +1027,15 @@ function derivedCategoryRows(){
   if(state.platform==='All')return [];
   let rows=[];
   if(state.platform==='Shopee'){
-    if(state.source==='Overall')rows=DATA.categories.filter(r=>r.platform==='Shopee'&&['Product Card','Live','Video','Affiliate'].includes(r.source)&&overlapPeriod(r));
-    else rows=DATA.categories.filter(r=>r.platform==='Shopee'&&r.source===state.source&&overlapPeriod(r));
+    if(state.source==='Overall')rows=DATA.categories.filter(r=>r.platform==='Shopee'&&['Product Card','Live','Video','Affiliate'].includes(r.source));
+    else rows=DATA.categories.filter(r=>r.platform==='Shopee'&&r.source===state.source);
   }else{
-    if(state.source==='Overall'||state.source==='Product Card')rows=DATA.categories.filter(r=>r.platform==='TikTok'&&r.source==='Product Card'&&overlapPeriod(r));
-    else if(state.source==='TTLK')rows=DATA.categories.filter(r=>r.platform==='TikTok'&&(r.source==='Video Affiliate'||r.source==='Live Affiliate')&&overlapPeriod(r));
-    else rows=DATA.categories.filter(r=>r.platform==='TikTok'&&r.source===state.source&&overlapPeriod(r));
+    if(state.source==='Overall'||state.source==='Product Card')rows=DATA.categories.filter(r=>r.platform==='TikTok'&&r.source==='Product Card');
+    else if(state.source==='TTLK')rows=DATA.categories.filter(r=>r.platform==='TikTok'&&(r.source==='Video Affiliate'||r.source==='Live Affiliate'));
+    else rows=DATA.categories.filter(r=>r.platform==='TikTok'&&r.source===state.source);
   }
+  // Chọn các kỳ nằm trọn trong bộ lọc và không chồng lấn, tránh cộng 01–25 cùng 01–14/15/16…
+  rows=bestPeriodRows(rows);
   if(state.brand!=='All')rows=rows.filter(r=>r.brand===state.brand);
   return aggregateCategories(rows,state.source)
 }
@@ -1015,12 +1043,13 @@ function derivedProducts(cat){
   if(state.platform==='All')return [];
   let rows=[];
   if(state.platform==='Shopee'){
-    rows=DATA.products.filter(r=>r.platform==='Shopee'&&(state.source==='Overall'?['Product Card','Live','Video','Affiliate'].includes(r.source):r.source===state.source)&&overlapPeriod(r));
+    rows=DATA.products.filter(r=>r.platform==='Shopee'&&(state.source==='Overall'?['Product Card','Live','Video','Affiliate'].includes(r.source):r.source===state.source));
   }else{
-    if(state.source==='Overall'||state.source==='Product Card')rows=DATA.products.filter(r=>r.platform==='TikTok'&&r.source==='Product Card'&&overlapPeriod(r));
-    else if(state.source==='TTLK')rows=DATA.products.filter(r=>r.platform==='TikTok'&&r.source==='Video Affiliate'&&overlapPeriod(r));
-    else rows=DATA.products.filter(r=>r.platform==='TikTok'&&r.source===state.source&&overlapPeriod(r));
+    if(state.source==='Overall'||state.source==='Product Card')rows=DATA.products.filter(r=>r.platform==='TikTok'&&r.source==='Product Card');
+    else if(state.source==='TTLK')rows=DATA.products.filter(r=>r.platform==='TikTok'&&r.source==='Video Affiliate');
+    else rows=DATA.products.filter(r=>r.platform==='TikTok'&&r.source===state.source);
   }
+  rows=bestPeriodRows(rows);
   if(state.brand!=='All')rows=rows.filter(r=>r.brand===state.brand);if(cat)rows=rows.filter(r=>r.category===cat);
   const m={};rows.forEach(r=>{let k=[r.pid,r.name,r.brand,r.category].join('||');if(!m[k])m[k]={...r,gmv:0,orders:0,units:0,source:state.source};m[k].gmv+=Number(r.gmv||0);m[k].orders+=Number(r.orders||0);m[k].units+=Number(r.units||0)});
   let out=Object.values(m).sort((a,b)=>b.gmv-a.gmv);const ct={};out.forEach(r=>ct[r.category]=(ct[r.category]||0)+r.gmv);out.forEach((r,i)=>{r.share_cat=ct[r.category]?r.gmv/ct[r.category]:0;r.rank=i+1});return out
