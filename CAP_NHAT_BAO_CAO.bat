@@ -9,7 +9,7 @@ if %errorlevel%==0 (
   set "PYTHON_CMD=py"
 )
 
-%PYTHON_CMD% "%SCRIPT%" --input "D:\Data_Input" --output "D:\Diligo_Dashboard_Output"
+%PYTHON_CMD% "%SCRIPT%" --input "D:\Data_Input" --output "D:\Diligo_Dashboard_Output" --publish
 if errorlevel 1 (
   echo.
   echo Co loi. Chup man hinh cua so nay de gui ho tro.

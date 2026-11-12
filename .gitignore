@@ -14,3 +14,6 @@ KIEM_TRA_NAP_*.txt
 __pycache__/
 *.pyc
 *.tmp
+
+# Token GitHub để tự đăng báo cáo: KHÔNG BAO GIỜ đưa lên
+GITHUB_TOKEN.txt
