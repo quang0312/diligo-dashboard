@@ -10,6 +10,7 @@ from . import __version__
 from .config import DEFAULT_INPUT, DEFAULT_OUTPUT, HISTORY_V2_FILENAME
 from .collect import collect_data
 from .dashboard import PROJECT_DIR, build_dashboard_data, load_automation_config, render_html
+from .publish import PublishError, load_publish_config, make_requester, pages_url, publish_index
 from .export_csv import flatten_content, flatten_source_periods, write_csv
 from .store import (
     StoreError, baseline_copy, load_store, merge_history_store, preferred_report_period, save_store,
@@ -48,7 +49,29 @@ def write_power_bi_csv(output: Path, data: dict) -> Path:
     return data_out
 
 
-def run(input_root: Path, output: Path, baseline_dirs: list[Path] | None = None) -> int:
+def publish_step(html_path: Path, config_dir: Path) -> None:
+    """Đăng index.html lên GitHub Pages. Lỗi ở bước này không làm hỏng báo cáo trên máy."""
+    log("")
+    try:
+        loaded = load_publish_config(config_dir)
+        if loaded is None:
+            log("ℹ️ Chưa cài đặt tự đăng lên GitHub (thiếu GITHUB_TOKEN.txt). Báo cáo chỉ cập nhật trên máy.")
+            log("   Xem mục 'Đăng báo cáo lên link' trong README.md để cài một lần.")
+            return
+        cfg, token = loaded
+        log("⏳ Đang đăng báo cáo lên GitHub...")
+        changed, msg = publish_index(html_path, cfg, make_requester(token))
+        log(("✅ " if changed else "ℹ️ ") + msg)
+        log(f"✅ LINK BÁO CÁO: {pages_url(cfg)}")
+        if changed:
+            log("   GitHub Pages cần khoảng 1–2 phút để hiện bản mới (bấm Ctrl+F5 nếu vẫn thấy bản cũ).")
+    except PublishError as e:
+        log("⚠️ CHƯA ĐĂNG ĐƯỢC LÊN GITHUB: " + str(e))
+        log("   Báo cáo trên máy vẫn đã cập nhật xong. Sửa lỗi trên rồi chạy lại BAT để đăng.")
+
+
+def run(input_root: Path, output: Path, baseline_dirs: list[Path] | None = None,
+        publish: bool = False, publish_config_dir: Path | None = None) -> int:
     output.mkdir(parents=True, exist_ok=True)
     log("=" * 68); log(f"DILIGO AUTO DASHBOARD {__version__}"); log(f"Input : {input_root}"); log(f"Output: {output}"); log("=" * 68)
     try:
@@ -85,6 +108,8 @@ def run(input_root: Path, output: Path, baseline_dirs: list[Path] | None = None)
         log(f"⚠️ Cảnh báo dữ liệu: {len(merged['warnings'])}")
         for w in merged["warnings"][:10]:
             log("   - " + w)
+        if publish:
+            publish_step(output / "index.html", publish_config_dir or PROJECT_DIR)
         return 0
     except StoreError as e:
         log("❌ " + str(e))
@@ -101,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="Thư mục xuất báo cáo")
     parser.add_argument("--baseline-dir", action="append", default=None,
                         help="Thư mục chứa baseline_v25.json (chỉ cần cho lần chạy đầu tiên của bản mới)")
+    parser.add_argument("--publish", action="store_true",
+                        help="Sau khi xong, đăng index.html lên GitHub Pages (cần GITHUB_TOKEN.txt)")
     args = parser.parse_args(argv)
     input_root = Path(args.input)
     if not input_root.exists():
@@ -108,4 +135,4 @@ def main(argv: list[str] | None = None) -> int:
         log("Bạn có thể chạy: py Diligo_Auto_Dashboard.py --input D:\\Data_Input")
         return 1
     dirs = [Path(d) for d in args.baseline_dir] if args.baseline_dir else None
-    return run(input_root, Path(args.output), dirs)
+    return run(input_root, Path(args.output), dirs, publish=args.publish)
