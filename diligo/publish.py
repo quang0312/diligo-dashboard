@@ -52,6 +52,37 @@ def load_publish_config(config_dir: Path) -> tuple[dict, str] | None:
     return cfg, token
 
 
+def read_repo_config(config_dir: Path) -> dict | None:
+    """Đọc GITHUB_PUBLISH.json (không cần token). Dùng cho cách đăng thủ công."""
+    p = config_dir / CONFIG_FILENAME
+    try:
+        cfg = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not all(str(cfg.get(k) or "").strip() for k in ("owner", "repo", "branch")):
+        return None
+    return cfg
+
+
+def upload_url(cfg: dict) -> str:
+    return f"https://github.com/{cfg['owner']}/{cfg['repo']}/upload/{cfg['branch']}"
+
+
+def open_manual_upload(html_path: Path, cfg: dict) -> bool:
+    """Windows: mở trang tải file của GitHub + mở thư mục và chọn sẵn index.html."""
+    import subprocess
+    import sys
+    import webbrowser
+    if sys.platform != "win32":
+        return False
+    try:
+        webbrowser.open(upload_url(cfg))
+        subprocess.Popen(["explorer", "/select,", str(html_path)])
+        return True
+    except Exception:
+        return False
+
+
 def pages_url(cfg: dict) -> str:
     owner, repo = cfg["owner"], cfg["repo"]
     if repo.lower() == f"{owner.lower()}.github.io":
