@@ -1,0 +1,16 @@
+# Dữ liệu kinh doanh KHÔNG đưa lên GitHub (repo đang public)
+Data_Input/
+Diligo_Dashboard_Output/
+*.xlsx
+*.xls
+*.csv
+*.pbix
+HistoryStore*.json
+HistoryStore_backups/
+baseline_v25.json
+data_snapshot.json
+KIEM_TRA_NAP_*.txt
+
+__pycache__/
+*.pyc
+*.tmp

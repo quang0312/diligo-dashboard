@@ -1,0 +1,17 @@
+{
+  "peak_share": 0.5,
+  "owners": {
+    "ecommerce": "Quản lý TMĐT",
+    "shopee": "Vận hành Shopee",
+    "tiktok": "Vận hành TikTok / Live / Affiliate",
+    "ads": "Phụ trách quảng cáo",
+    "finance": "Kế toán + TMĐT"
+  },
+  "deadlines": {
+    "ecommerce": 3,
+    "shopee": 3,
+    "tiktok": 2,
+    "ads": 2,
+    "finance": 4
+  }
+}
