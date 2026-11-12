@@ -10,7 +10,10 @@ from . import __version__
 from .config import DEFAULT_INPUT, DEFAULT_OUTPUT, HISTORY_V2_FILENAME
 from .collect import collect_data
 from .dashboard import PROJECT_DIR, build_dashboard_data, load_automation_config, render_html
-from .publish import PublishError, load_publish_config, make_requester, pages_url, publish_index
+from .publish import (
+    PublishError, load_publish_config, make_requester, open_manual_upload, pages_url, publish_index,
+    read_repo_config, upload_url,
+)
 from .export_csv import flatten_content, flatten_source_periods, write_csv
 from .store import (
     StoreError, baseline_copy, load_store, merge_history_store, preferred_report_period, save_store,
@@ -49,14 +52,29 @@ def write_power_bi_csv(output: Path, data: dict) -> Path:
     return data_out
 
 
+def manual_upload_hint(html_path: Path, config_dir: Path) -> None:
+    """Chưa có token: mở sẵn trang tải lên GitHub và thư mục chứa index.html để kéo thả."""
+    cfg = read_repo_config(config_dir)
+    if cfg is None:
+        log("ℹ️ Báo cáo chỉ cập nhật trên máy (chưa cấu hình GITHUB_PUBLISH.json).")
+        return
+    log("📤 ĐĂNG LÊN LINK (làm tay, khoảng 30 giây):")
+    log(f"   1. Trang tải lên GitHub: {upload_url(cfg)}")
+    log(f"   2. Kéo file {html_path} thả vào trang đó (CHỈ file index.html).")
+    log("   3. Kéo xuống cuối, bấm 'Commit changes'.")
+    log(f"   4. Sau 1–2 phút mở: {pages_url(cfg)} (Ctrl+F5 nếu vẫn thấy bản cũ).")
+    if open_manual_upload(html_path, cfg):
+        log("   → Đã mở sẵn trang GitHub và thư mục có index.html (đã chọn sẵn file).")
+    log("   (Muốn tự đăng hoàn toàn: tạo GITHUB_TOKEN.txt, xem README mục 'Đăng báo cáo lên link'.)")
+
+
 def publish_step(html_path: Path, config_dir: Path) -> None:
     """Đăng index.html lên GitHub Pages. Lỗi ở bước này không làm hỏng báo cáo trên máy."""
     log("")
     try:
         loaded = load_publish_config(config_dir)
         if loaded is None:
-            log("ℹ️ Chưa cài đặt tự đăng lên GitHub (thiếu GITHUB_TOKEN.txt). Báo cáo chỉ cập nhật trên máy.")
-            log("   Xem mục 'Đăng báo cáo lên link' trong README.md để cài một lần.")
+            manual_upload_hint(html_path, config_dir)
             return
         cfg, token = loaded
         log("⏳ Đang đăng báo cáo lên GitHub...")

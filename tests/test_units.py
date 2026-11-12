@@ -92,6 +92,50 @@ class XlsxReaderTest(TempDirCase):
             xlsx_read_sheet(p, "không có")
 
 
+class ShopeeContributionTest(TempDirCase):
+    """Shopee đổi mẫu file Live/Video từ 10/2026; phải đọc được cả mẫu cũ và mẫu mới."""
+    def make(self, name: str, sheets: list[tuple[str, list[list[str]]]]) -> Path:
+        main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        from xml.sax.saxutils import escape
+        p = self.tmp / name
+        with ZipFile(p, "w") as z:
+            z.writestr("xl/workbook.xml", f'<workbook xmlns="{main}" xmlns:r="{rel}"><sheets>' + "".join(
+                f'<sheet name="{escape(n)}" sheetId="{i + 1}" r:id="rId{i + 1}"/>' for i, (n, _) in enumerate(sheets)) + "</sheets></workbook>")
+            z.writestr("xl/_rels/workbook.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + "".join(
+                f'<Relationship Id="rId{i + 1}" Target="worksheets/sheet{i + 1}.xml"/>' for i in range(len(sheets))) + "</Relationships>")
+            for i, (_, rows) in enumerate(sheets):
+                body = "".join("<row>" + "".join(f'<c r="{chr(65 + j)}{r + 1}" t="inlineStr"><is><t>{escape(v)}</t></is></c>'
+                                                 for j, v in enumerate(row)) + "</row>" for r, row in enumerate(rows))
+                z.writestr(f"xl/worksheets/sheet{i + 1}.xml", f'<worksheet xmlns="{main}"><sheetData>{body}</sheetData></worksheet>')
+        return p
+
+    def live_sheets(self, names, title_col, orders_col):
+        head = ["Mã Phiên Chat", title_col, "Tỷ lệ doanh số", "Doanh số (VND)", orders_col, "Sản phẩm", "Lượt xem Livestream", "Lượt nhấp vào sản phẩm"]
+        return [("(đơn đã xác nhận)Lưu lượng ...", [["Mã sản phẩm", "Doanh số (VND)"], ["1", "999"]])] + [
+            (n, [["Live"], head, ["42113202", "Deal 9.10", "9%", gmv, orders, "224,00", "994", "868"]])
+            for n, gmv, orders in zip(names, ["20.181.890", "18.417.546", "17.559.722"], ["161,00", "148,00", "142,00"])]
+
+    def check_live(self, p: Path):
+        from diligo.parsers.shopee import parse_shopee_contribution
+        w = []
+        c = parse_shopee_contribution(p, "live", w)
+        self.assertEqual(w, [])
+        self.assertEqual((c["period_start"], c["period_end"]), ("2026-10-01", "2026-10-31"))
+        it = c["items"][0]
+        self.assertEqual((it["item_id"], it["title"], it["gmv"], it["orders"], it["units"], it["views"]),
+                         ("42113202", "Deal 9.10", 18417546.0, 148.0, 224.0, 994.0))   # luôn lấy "đơn đã xác nhận"
+
+    def test_new_format_oct_2026(self):
+        self.check_live(self.make("producttraffic_Seller_Live.20261001_20261031.xlsx", self.live_sheets(
+            ["Theo phiên live (đã đặt hàng)", "Theo phiên live (đơn đã xác...", "Theo phiên live (đơn đã tha..."],
+            "Tên phiên live", "Orders")))
+
+    def test_old_format(self):
+        self.check_live(self.make("producttraffic_Seller_Live.20261001_20261031.xlsx", self.live_sheets(
+            ["Session Contribution (place...", "Session Contribution (confi...", "Session Contribution (paid ..."],
+            "Session Title", "psd_label_orders")))
+
 class MergeTest(unittest.TestCase):
     def test_new_period_replaces_old_not_added(self):
         old = store._empty_store(); new = store._empty_store()

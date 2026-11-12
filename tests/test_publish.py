@@ -114,5 +114,21 @@ class PublishTest(unittest.TestCase):
         self.assertIn("CHƯA ĐĂNG ĐƯỢC LÊN GITHUB", buf.getvalue())
 
 
+    def test_manual_hint_without_token(self):
+        d = self.tmp / "cfg3"; d.mkdir()
+        (d / "GITHUB_PUBLISH.json").write_text(json.dumps(self.cfg), encoding="utf-8")
+        opened = []
+        orig = cli.open_manual_upload
+        cli.open_manual_upload = lambda p, c: opened.append((p, c)) or True
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as buf:
+                cli.publish_step(self.html, d)
+        finally:
+            cli.open_manual_upload = orig
+        out = buf.getvalue()
+        self.assertIn("https://github.com/o/r/upload/main", out)
+        self.assertIn("https://o.github.io/r/", out)
+        self.assertEqual(opened[0][0], self.html)
+
 if __name__ == "__main__":
     unittest.main()

@@ -266,13 +266,45 @@ def parse_shopee_source(path: Path, source: str, warnings: list[str]) -> dict | 
     }
 
 
+# Tên sheet "đóng góp theo phiên/video/affiliate" của Shopee.
+# Mẫu cũ: "Session Contribution (confirmed...)". Từ 10/2026: "Theo phiên live (đơn đã xác nhận)".
+CONTRIBUTION_SHEET_NAMES = {
+    "Session": ("theo phiên live",),
+    "Video": ("theo video",),
+    "Affiliate": ("theo affiliate", "theo tiếp thị liên kết"),
+}
+
+
+def _is_confirmed_sheet(name: str) -> bool:
+    n = name.lower()
+    return "(confi" in n or "xác nhận" in n or "đã xác" in n
+
+
 def _contribution_sheet_selector(prefix: str) -> Callable[[str, int, list[str]], bool]:
+    new_names = CONTRIBUTION_SHEET_NAMES.get(prefix, ())
+
+    def matches(x: str) -> bool:
+        lx = x.lower()
+        return (prefix.lower() in lx and "contribution" in lx) or any(lx.startswith(p) for p in new_names)
+
     def sel(n: str, i: int, names: list[str]) -> bool:
-        contrib = [x for x in names if prefix.lower() in x.lower() and "contribution" in x.lower()]
+        contrib = [x for x in names if matches(x)]
+        confirmed = [x for x in contrib if _is_confirmed_sheet(x)]
+        if confirmed:
+            return n == confirmed[0]   # luôn dùng sheet "đơn đã xác nhận"
         if len(contrib) >= 2:
-            return n == contrib[1]  # placed, confirmed, paid -> confirmed = 2nd
+            return n == contrib[1]     # placed, confirmed, paid -> confirmed = 2nd
         return False
     return sel
+
+
+def _first(rec: dict, *keys: str):
+    """Giá trị của cột đầu tiên có dữ liệu (Shopee hay đổi tên cột giữa các lần xuất)."""
+    for k in keys:
+        v = rec.get(k)
+        if v not in (None, ""):
+            return v
+    return None
 
 
 def parse_shopee_contribution(path: Path, kind: str, warnings: list[str]) -> dict | None:
@@ -303,20 +335,20 @@ def parse_shopee_contribution(path: Path, kind: str, warnings: list[str]) -> dic
         gmv = safe_float(rec.get("Doanh số (VND)"))
         if kind == "live":
             item_id = str(rec.get("Mã Phiên Chat") or "")
-            title = str(rec.get("Session Title") or item_id)
-            orders = safe_float(rec.get("psd_label_orders"))
+            title = str(_first(rec, "Session Title", "Tên phiên live") or item_id)
+            orders = safe_float(_first(rec, "psd_label_orders", "Orders", "Đơn hàng"))
             units = safe_float(rec.get("Sản phẩm"))
             creator = "Shopee Live"
         elif kind == "video":
             item_id = str(rec.get("psd_label_video_id") or "")
             title = str(rec.get("Video") or item_id)
-            orders = safe_float(rec.get("psd_label_orders"))
+            orders = safe_float(_first(rec, "psd_label_orders", "Orders", "Đơn hàng"))
             units = safe_float(rec.get("Sản phẩm"))
             creator = "Shopee Video"
         else:
             item_id = str(rec.get("Affiliate Username") or "")
             title = item_id
-            orders = safe_float(rec.get("psd_label_orders"))
+            orders = safe_float(_first(rec, "psd_label_orders", "Orders", "Đơn hàng"))
             units = safe_float(rec.get("Sản phẩm"))
             creator = item_id
         affiliate_channel = file_channel
@@ -342,6 +374,8 @@ def parse_shopee_contribution(path: Path, kind: str, warnings: list[str]) -> dic
             "affiliate_channel": affiliate_channel if kind == "affiliate" else None,
             "source_file":path.name,
         })
+    if not items:
+        warnings.append(f"Shopee {kind} {path.name}: sheet danh sách (phiên/video/KOC) không có dòng nào – file Shopee xuất trống, nên tải lại kỳ này.")
     return {"platform":"Shopee","kind":output_kind,"period_start":iso(ps),"period_end":iso(pe),"items":items,"_mtime":path.stat().st_mtime,"source_file":path.name}
 
 

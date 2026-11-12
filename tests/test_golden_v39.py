@@ -12,6 +12,11 @@ Ví dụ (Windows):
 
 Yêu cầu: index.html, toàn bộ CSV, file kiểm tra và kho lịch sử phải KHỚP TỪNG BYTE / TỪNG DÒNG
 với V39, cả ở lần chạy chuyển đổi đầu tiên lẫn lần chạy tiếp theo (khi đã không cần baseline_v25.json).
+
+Thay đổi CÓ CHỦ ĐÍCH so với V39 (bản V39 trong test được nạp đúng phần sửa này, mọi phần khác giữ nguyên):
+- 40.1: đọc sheet đóng góp Live/Video/Affiliate Shopee theo mẫu mới ("Theo phiên live (...)",
+  cột "Tên phiên live", cột số đơn "Orders"). V39 đọc số đơn = 0 với file xuất từ khoảng 21/09/2026.
+  Thêm cảnh báo khi sheet danh sách phiên/video/KOC trong file Shopee trống.
 """
 from __future__ import annotations
 
@@ -41,6 +46,14 @@ COMPARED_FILES = [
 ]
 
 
+# Các phần sửa có chủ đích (xem docstring): V39 dùng bộ đọc mới cho đúng phần đó.
+LEGACY_PATCH = f"""
+# --- vá trong test: thay đổi có chủ đích của bản 40.x ---
+sys.path.insert(0, {str(ROOT)!r})
+from diligo.parsers.shopee import parse_shopee_contribution  # noqa: E402,F811
+"""
+
+
 def strip_v1(store: dict) -> dict:
     out = {k: v for k, v in store.items() if k != "_meta"}
     out["source_periods"] = [{k: v for k, v in r.items() if k != "products"} for r in out.get("source_periods", [])]
@@ -55,7 +68,11 @@ class GoldenV39(unittest.TestCase):
         cls.tmp = Path(tempfile.mkdtemp(prefix="diligo_golden_"))
         # V39 chạy với cùng template mới để so sánh index.html từng byte (dữ liệu nhúng do Python quyết định).
         legacy = cls.tmp / "legacy"; legacy.mkdir()
-        shutil.copy2(LEGACY_SCRIPT, legacy / "Diligo_Auto_Dashboard.py")
+        src = LEGACY_SCRIPT.read_text(encoding="utf-8")
+        tail = 'if __name__=="__main__":'
+        assert src.count(tail) == 1
+        src = src.replace(tail, LEGACY_PATCH + tail)
+        (legacy / "Diligo_Auto_Dashboard.py").write_text(src, encoding="utf-8")
         shutil.copy2(ROOT / "templates" / "dashboard.html", legacy / "dashboard_template_v25.html")
         shutil.copy2(ROOT / "AUTOMATION_CONFIG.json", legacy / "AUTOMATION_CONFIG.json")
         shutil.copy2(g / "baseline_v25.json", legacy / "baseline_v25.json")
